@@ -1,0 +1,35 @@
+# Local build products and signing material
+**/build/
+*.apk
+*.dex
+*.class
+*.keystore
+*.jks
+*.pem
+*.key
+*.p12
+*.pfx
+*.der
+*.crt
+*.cer
+# Deployments and captured data never belong in the repository
+protect.json
+*.local.json
+private/
+checkpoints/
+recordings/
+captures/
+logs/
+*.log
+*.mp4
+*.mov
+*.mkv
+*.flv
+*.ogg
+*.wav
+*.f32
+*.bin
+.env
+.env.*
+__pycache__/
+.DS_Store
