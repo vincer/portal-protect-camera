@@ -1,7 +1,33 @@
-"""Run on NUC. Validate real Android synthetic Opus and native wire packetization."""
+"""Validate raw Opus and native packetization; synthetic input is the default.
+
+OPUS_FIXTURE explicitly selects CodecProbe's Android-generated tone fixture.
+The synthetic default checks transport/decoding, not Android encoder behavior.
+"""
 import pathlib,struct,subprocess,json,tempfile,os
 base=pathlib.Path(__file__).resolve().parents[1]
-payload=pathlib.Path(os.environ['OPUS_FIXTURE']).read_bytes();at=0;packets=[]
+def synthetic_fixture():
+ with tempfile.TemporaryDirectory(prefix='portal-opus-source-') as tmp:
+  path=pathlib.Path(tmp)/'tone.ogg'
+  subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i',
+   'sine=frequency=440:sample_rate=48000','-t','2.1','-ac','1','-c:a','libopus',
+   '-application','lowdelay','-frame_duration','20','-b:a','64k','-vbr','off',
+   '-y',str(path)],check=True,capture_output=True,timeout=20)
+  # Join Ogg lacing segments across pages, preserving complete raw packets.
+  data=path.read_bytes();at=0;pending=bytearray();audio=[]
+  while at<len(data):
+   assert data[at:at+4]==b'OggS'
+   segments=data[at+26];sizes=data[at+27:at+27+segments];offset=at+27+segments
+   for size in sizes:
+    pending.extend(data[offset:offset+size]);offset+=size
+    if size<255:
+     packet=bytes(pending);pending.clear()
+     if not packet.startswith((b'OpusHead',b'OpusTags')):audio.append(packet)
+   at=offset
+  assert not pending and len(audio)>=100
+  return b''.join(struct.pack('>qI',(i+1)*20000,len(packet))+packet for i,packet in enumerate(audio[:100]))
+source='android_fixture' if os.environ.get('OPUS_FIXTURE') else 'ffmpeg_synthetic'
+payload=pathlib.Path(os.environ['OPUS_FIXTURE']).read_bytes() if os.environ.get('OPUS_FIXTURE') else synthetic_fixture()
+at=0;packets=[]
 while at<len(payload):
  pts,size=struct.unpack_from('>qI',payload,at);at+=12;data=payload[at:at+size];at+=size;packets.append((pts,data))
 assert len(packets)==100
@@ -22,13 +48,13 @@ def page(p,seq,granule,flags=0):
  sizes=[255]*(len(p)//255)+[len(p)%255]
  b=bytearray(b'OggS'+bytes([0,flags])+struct.pack('<QII',granule,42,seq)+b'\0'*4+bytes([len(sizes)])+bytes(sizes)+p);struct.pack_into('<I',b,22,crc(b));return b
 with tempfile.TemporaryDirectory(prefix='portal-opus-verify-') as d:
- d=pathlib.Path(d);ogg=page(b'OpusHead'+bytes([1,1])+struct.pack('<HIhB',312,48000,0,0),0,0,2)
+ d=pathlib.Path(d);fixture=d/'fixture.bin';fixture.write_bytes(payload);ogg=page(b'OpusHead'+bytes([1,1])+struct.pack('<HIhB',312,48000,0,0),0,0,2)
  ogg+=page(b'OpusTags'+struct.pack('<II',0,0),1,0)
  for i,(_,p) in enumerate(packets):ogg+=page(p,i+2,(i+1)*960,4 if i==len(packets)-1 else 0)
  (d/'test.ogg').write_bytes(ogg)
  r=subprocess.run(['ffmpeg','-nostdin','-v','error','-i',str(d/'test.ogg'),'-f','null','-'],capture_output=True,text=True,timeout=15);assert r.returncode==0 and not r.stderr,r.stderr
  subprocess.run(['javac','-d',str(d),str(base/'app/ProtectMuxer.java'),str(base/'tests/OpusMuxerFixture.java')],check=True,capture_output=True)
- subprocess.run(['java','-cp',str(d),'local.codex.portalprotectcamera.OpusMuxerFixture',os.environ['OPUS_FIXTURE'],str(d/'native.flv')],check=True)
+ subprocess.run(['java','-cp',str(d),'local.codex.portalprotectcamera.OpusMuxerFixture',str(fixture),str(d/'native.flv')],check=True)
  raw=(d/'native.flv').read_bytes();at=13;tags=[]
  while at<len(raw):
   h=raw[at:at+11];k=h[0];n=int.from_bytes(h[1:4],'big');stamp=int.from_bytes(h[4:7],'big')+(h[7]<<24);p=raw[at+11:at+11+n];end=at+11+n
@@ -38,7 +64,7 @@ with tempfile.TemporaryDirectory(prefix='portal-opus-verify-') as d:
   at=end+20
  assert tags[0]==(29925,bytes.fromhex('cf000300'))
  assert tags[1:]==[(30000+int(pts/1000)-75,p) for pts,p in packets]
- subprocess.run(['java','-cp',str(d),'local.codex.portalprotectcamera.OpusMuxerFixture',os.environ['OPUS_FIXTURE'],str(d/'opus-only.flv'),'false'],check=True)
+ subprocess.run(['java','-cp',str(d),'local.codex.portalprotectcamera.OpusMuxerFixture',str(fixture),str(d/'opus-only.flv'),'false'],check=True)
  only=(d/'opus-only.flv').read_bytes();at=13;counts={};opus_only_packets=[]
  while at<len(only):
   h=only[at:at+11];k=h[0];n=int.from_bytes(h[1:4],'big');counts[k]=counts.get(k,0)+1
@@ -46,4 +72,4 @@ with tempfile.TemporaryDirectory(prefix='portal-opus-verify-') as d:
   at+=11+n+20
  assert counts.get(8,0)==0 and b'audiocodecid' not in only
  assert opus_only_packets==[bytes.fromhex('cf000300')]+[p for _,p in packets]
- print(json.dumps({'opus_only_zero_aac_headers_and_packets':True,'android_opus_packets' :len(packets),'mono':True,'packet_duration_ms':20,'decoded_without_errors':True,'native_payloads_preserved':True,'native_tag_type':10,'native_clock_rate':48000,'timestamp_advance_ms':75,'first_encoder_pts_us':packets[0][0]},indent=2))
+ print(json.dumps({'opus_only_zero_aac_headers_and_packets':True,'fixture_source':source,'opus_packets':len(packets),'mono':True,'packet_duration_ms':20,'decoded_without_errors':True,'native_payloads_preserved':True,'native_tag_type':10,'native_clock_rate':48000,'timestamp_advance_ms':75,'first_encoder_pts_us':packets[0][0]},indent=2))

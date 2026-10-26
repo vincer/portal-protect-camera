@@ -18,6 +18,8 @@ public class CameraActivity extends Activity {
   }
   protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);apply(intent);}
   void apply(Intent intent){
+    // Persist transport selection independently of source capture. The legacy
+    // "nuc" spelling simply disables native Protect; it keeps RTSP available.
     String mode=intent.getStringExtra("protect_mode");
     if(mode!=null&&(mode.equals("portal")||mode.equals("nuc")))getSharedPreferences("camera",0).edit().putBoolean("protect_native",mode.equals("portal")).commit();
     boolean stop=intent.getBooleanExtra("stop",false);

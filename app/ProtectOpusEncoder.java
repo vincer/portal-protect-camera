@@ -32,6 +32,9 @@ final class ProtectOpusEncoder {
       }
     }catch(Exception e){if(!closed)Log.w(CameraService.TAG,"OPUS_INPUT_ERROR "+e.getClass().getSimpleName());}
   }
+  // A successful configure/start is not enough to advertise audio support.
+  // Publish capability only after a real encoded packet, then reconnect control
+  // so Protect sees it. RTSP remains on AAC during this handshake transition.
   void drain(){MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();
     try{while(!closed&&camera.running){int i=codec.dequeueOutputBuffer(info,10000);if(i<0)continue;
       try{if(info.size>0&&(info.flags&MediaCodec.BUFFER_FLAG_CODEC_CONFIG)==0){

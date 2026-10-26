@@ -15,13 +15,20 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 
-/** Small, explicit Camera2 → H.264 + software AAC RTSP source for the local NVR. */
+/**
+ * Owns one camera, one microphone, and shared encoded-frame fanout.
+ * AAC feeds direct RTSP and native recording; optional Opus encodes the same
+ * PCM independently for native live consumers. No bridge-side video transcode.
+ * This RTSP server is unauthenticated LAN-only development functionality.
+ */
 public class CameraService extends Service {
   static final String TAG="PortalProtectCamera";
   static final int WIDTH=1280,HEIGHT=720,FPS=30,VIDEO_BITRATE=2000000;
   static final int SAMPLE_RATE=48000,AUDIO_BITRATE=64000,PORT=8556;
   volatile boolean running=false;
   volatile byte[] sps,pps;
+  // Capture/drain PTS are relative to a monotonic origin. Keep originWallMs
+  // paired with it: RTCP and Protect map the same media timeline to wall time.
   volatile long originUs;
   volatile long originWallMs;
   volatile MediaCodec video,audio;
@@ -218,6 +225,9 @@ public class CameraService extends Service {
         if(captureChannels==2){for(int i=0;i+1<n;i+=2){int delta=pcm[i]-pcm[i+1];stereoDifferenceEnergy+=(long)delta*delta;stereoPairs++;}}
         ProtectOpusEncoder op=opus;
         if(op!=null)op.offer(pcm,n,captureChannels,stamp+samples*1000000L/SAMPLE_RATE);
+        // Historical behavior: only submitted AAC samples advance this counter.
+        // Buffer loss/mic restart timing needs a dedicated trial before changing
+        // it, because both native codecs currently share this sample timeline.
         int input=codec.dequeueInputBuffer(10000);
         if(input>=0){
           ByteBuffer b=codec.getInputBuffer(input);b.clear();b.order(ByteOrder.LITTLE_ENDIAN);
@@ -257,6 +267,8 @@ public class CameraService extends Service {
   static class Frame{final boolean audio,opus;final byte[] data;final long pts;
     Frame(boolean a,byte[] d,long p){this(a,false,d,p);}
     Frame(boolean a,boolean o,byte[] d,long p){audio=a;opus=o;data=d;pts=p;}}
+  // Native sinks may consume both audio codecs. RTSP's SDP describes AAC only,
+  // so Opus must never enter its queues or be mislabeled as AAC RTP payloads.
   void broadcast(Frame frame){if(protectBridge!=null)protectBridge.offer(frame);if(!frame.opus)for(Client client:clients)if(client.playing&&!client.queue.offer(frame)){client.close();}}
   void serve(){
     try{server=new ServerSocket(PORT);Log.i(TAG,"RTSP_LISTEN port="+PORT);while(running){Socket socket=server.accept();if(clients.size()>=8){socket.close();continue;}Client client=new Client(socket);clients.add(client);new Thread(()->client.read(),"ProtectRtspClient").start();}}

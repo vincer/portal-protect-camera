@@ -29,6 +29,8 @@ final class ProtectWebSocket implements Closeable {
     byte[] mask=new byte[4];random.nextBytes(mask);out.write(mask);byte[] encoded=new byte[data.length];for(int i=0;i<data.length;i++)encoded[i]=(byte)(data[i]^mask[i&3]);out.write(encoded);out.flush();
   }
   void text(String text)throws IOException{send(1,text.getBytes(StandardCharsets.UTF_8));}
+  // Recorder JSON may be in text OR binary WebSocket messages. Frame reads
+  // remain bounded, support fragmentation, and handle ping/pong independently.
   String receive()throws IOException{
     ByteArrayOutputStream message=new ByteArrayOutputStream();int type=0;
     while(true){int first=read(),second=read(),opcode=first&15;boolean fin=(first&128)!=0;if((first&112)!=0||(second&128)!=0)throw new IOException("Unsupported WebSocket frame");

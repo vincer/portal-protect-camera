@@ -1,4 +1,9 @@
-import subprocess,tempfile,pathlib,json,re,struct,collections,os
+"""Decode and verify protocol timing using temporary synthetic media by default.
+
+SOURCE_MEDIA or SOURCE_RTSP explicitly opts into local/hardware media instead.
+No generated media, private configuration, or credentials are persisted.
+"""
+import subprocess,tempfile,pathlib,json,re,struct,collections,os,shutil
 base=pathlib.Path(__file__).resolve().parents[1]
 def run(args,**kw):return subprocess.run(args,check=True,**kw)
 def raw(hex_dump):
@@ -8,7 +13,17 @@ def raw(hex_dump):
  return bytes.fromhex(''.join(parts))
 with tempfile.TemporaryDirectory(prefix='portal-native-mux-') as folder:
  p=pathlib.Path(folder)
- run(['ffmpeg','-nostdin','-v','error','-rtsp_transport','tcp','-i',os.environ['SOURCE_RTSP'],'-t','6','-c','copy','-y',str(p/'source.mp4')],timeout=20)
+ if os.environ.get('SOURCE_MEDIA'):
+  shutil.copyfile(os.environ['SOURCE_MEDIA'],p/'source.mp4')
+ elif os.environ.get('SOURCE_RTSP'):
+  run(['ffmpeg','-nostdin','-v','error','-rtsp_transport','tcp','-i',os.environ['SOURCE_RTSP'],'-t','6','-c','copy','-y',str(p/'source.mp4')],timeout=20)
+ else:
+  # Exercise real H.264/AAC decoders without reading any camera or microphone.
+  run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','testsrc2=size=1280x720:rate=30',
+       '-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','6',
+       '-c:v','libx264','-preset','ultrafast','-profile:v','baseline','-pix_fmt','yuv420p',
+       '-g','30','-bf','0','-c:a','aac','-ar','48000','-ac','2','-b:a','64k',
+       '-y',str(p/'source.mp4')],timeout=30)
  info=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_packets','-show_streams','-show_data','-of','json',str(p/'source.mp4')]))
  streams={s['index']:s for s in info['streams']};video=next(s for s in streams.values() if s['codec_type']=='video');avcc=raw(video['extradata']);at=6;n=int.from_bytes(avcc[at:at+2],'big');at+=2;sps=avcc[at:at+n];at+=n+1;n=int.from_bytes(avcc[at:at+2],'big');at+=2;pps=avcc[at:at+n]
  expected=collections.Counter()

@@ -33,7 +33,7 @@ import java.util.*;
  * requirement; 75 ms is the smallest tested working value, not a proven minimum.
  * Do not remove the advance solely because recordings appear aligned: matching
  * packets showed Protect's export changes relative A/V timing versus live output.
- * See portal-protect/portal-native/clock-origin-trial/README.md and sync-capture/.
+ * See docs/TIMING.md for the public, media-free experiment summary.
  */
 final class ProtectMuxer {
   final OutputStream out;final long wallAnchor;final int advance;
@@ -72,6 +72,8 @@ final class ProtectMuxer {
   void script(String name,Map<String,Object> fields,long stamp)throws IOException{
     ByteArrayOutputStream b=new ByteArrayOutputStream();DataOutputStream d=new DataOutputStream(b);string(d,name);object(d,fields,true);tag(18,b.toByteArray(),stamp);
   }
+  // After PreviousTagSize, UniFi adds 16 bytes: a rate field and native clock
+  // trailer. Type 10 is Opus and uses the audio 48 kHz clock, not script rate.
   void tag(int kind,byte[] data,long stamp)throws IOException{
     if(stamp<0||stamp>0xffffffffL)throw new IOException("Invalid stream timestamp");
     out.write(kind);u24(out,data.length);u24(out,stamp);out.write((int)(stamp>>24)&255);u24(out,0);out.write(data);u32(out,11+data.length);
@@ -114,6 +116,8 @@ final class ProtectMuxer {
   // Observed wire contract: standalone CF000300 configuration followed by
   // complete raw Opus packets; 48 kHz trailer clock. AAC stays in type 8.
   // Reference: xuio/scrypted-unifi-direct src/native-rtsp.ts, pinned in opus-trial/.
+  // The configuration must not arrive later than its first shifted packet.
+  // This preserves the same accepted timestamp correction as native AAC.
   void startOpus(long firstAudioRelativeMs)throws IOException{
     long stamp=mediaOrigin+(audioRetainStartup?Math.min(0,firstAudioRelativeMs)-advance:0);
     tag(10,new byte[]{(byte)0xcf,0,3,0},stamp);

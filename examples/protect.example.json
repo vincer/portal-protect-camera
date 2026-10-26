@@ -1,0 +1,15 @@
+{
+  "host": "RECORDER_HOST",
+  "ip": "PORTAL_IP",
+  "mac": "ADOPTED_CAMERA_ID_12_HEX",
+  "keyPassword": "SET_LOCALLY",
+  "serverSha256": "VERIFIED_RECORDER_CERTIFICATE_SHA256",
+  "audioAdvanceMs": 75,
+  "audioStartupDropMs": 0,
+  "audioRetainStartup": true,
+  "audioPrerollMs": 0,
+  "clockSyncIntervalMs": 250,
+  "mediaClockOriginMs": 30000,
+  "enableOpus": true,
+  "protectOpusOnly": false
+}

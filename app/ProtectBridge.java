@@ -9,7 +9,12 @@ import java.security.cert.*;
 import java.util.*;
 import java.util.concurrent.*;
 import javax.net.ssl.*;
-/** Protect control and media, fed directly by the existing encoded-frame fanout. */
+/**
+ * Unofficial native Protect control and media, independent of direct RTSP.
+ * Only app-private files supply the adopted identity, recorder, and TLS pins.
+ * Fixed response templates are compatibility stubs, not proof that every
+ * advertised ISP/AI/settings feature is implemented by this prototype.
+ */
 final class ProtectBridge {
   static final String TAG="PortalNative";
   final CameraService camera;
@@ -35,6 +40,8 @@ final class ProtectBridge {
   }
   static String read(File f)throws IOException{try(InputStream in=new FileInputStream(f)){return read(in);}}
   static String read(InputStream in)throws IOException{ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n;while((n=in.read(buf))>=0){b.write(buf,0,n);if(b.size()>1024*1024)throw new IOException("Oversized configuration");}return b.toString("UTF-8");}
+  // Mutual TLS authenticates the adopted camera. Trust is restricted to the
+  // operator-provisioned recorder leaf pins; never weaken this for setup ease.
   SSLContext createTls()throws Exception{
     KeyStore store=KeyStore.getInstance("PKCS12");char[] password=config.getString("keyPassword").toCharArray();
     try(InputStream in=new FileInputStream(new File(camera.getFilesDir(),"protect.p12"))){store.load(in,password);}
@@ -74,6 +81,9 @@ final class ProtectBridge {
   long now(){return camera.originWallMs+(System.nanoTime()/1000-camera.originUs)/1000+offsetMs;}
   JSONObject copy(String name)throws JSONException{return new JSONObject(templates.getJSONObject(name).toString());}
   boolean opusRequested(){return config!=null&&config.optBoolean("enableOpus",false);}
+  // Isolation mode removes BOTH AAC capability and media. It worked for live
+  // audio but produced recordings without sound on the tested Protect version.
+  // Normal operation uses enableOpus=true, protectOpusOnly=false.
   boolean opusOnly(){return opusRequested()&&config.optBoolean("protectOpusOnly",false);}
   JSONObject features()throws JSONException{
     JSONObject f=copy("get_feature_flags");
@@ -116,6 +126,8 @@ final class ProtectBridge {
     else if(expected)response=payload;
     if(response!=null&&(expected||fn.equals("ChangeVideoSettings")))send(responseName,id,response);
   }
+  // The recorder names independent media destinations. All three slots reuse
+  // the same compressed source; names/withOpus changes rebuild only that sink.
   JSONObject videoSettings(JSONObject request)throws Exception{
     JSONObject video=request.optJSONObject("video");
     if(video!=null)for(String index:new String[]{"video1","video2","video3"}){
@@ -154,6 +166,8 @@ final class ProtectBridge {
     for(Sink sink:streams.values())if(!sink.closed&&!sink.queue.offer(f))sink.disconnect();
   }
   static final class NativeFrame{final CameraService.Frame frame;final List<byte[]> units;final boolean key;NativeFrame(CameraService.Frame f,List<byte[]> u,boolean k){frame=f;units=u;key=k;}}
+  // Bounded per-output queues prevent a slow recorder socket accumulating an
+  // unlimited backlog. Reconnect waits for a keyframe to start a decodable stream.
   final class Sink extends Thread{
     final String index,name,host;final int port;final boolean withOpus;volatile boolean closed;volatile Socket socket;
     final ArrayBlockingQueue<NativeFrame> queue=new ArrayBlockingQueue<>(180);

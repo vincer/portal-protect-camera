@@ -8,6 +8,8 @@ import java.nio.*;
 final class ProtectSnapshot {
   final CameraService camera;final ProtectBridge bridge;byte[] cached;long cachedAt;
   ProtectSnapshot(CameraService c,ProtectBridge b){camera=c;bridge=b;}
+  // Serialize decoder access and reuse a short-lived JPEG; native multi-view
+  // polling should not create a continuous second video-decode workload.
   synchronized byte[] get()throws Exception{
     long now=SystemClock.elapsedRealtime();if(cached!=null&&now-cachedAt<5000)return cached;
     long limit=now+1500;byte[] key;
